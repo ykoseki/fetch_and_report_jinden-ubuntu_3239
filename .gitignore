@@ -1,0 +1,26 @@
+# Output files
+Report_*.xlsx
+Notification_*.txt
+
+# Intermediate/Internal data
+jinden_data_3239.csv
+jinden_users.json
+jinden_groups.json
+jinden_depts.json
+
+# Logs
+claude_log.md
+Integrated_User_List.md
+
+# Application settings / Cache
+.claude/
+.mcp.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS files
+.DS_Store
+Thumbs.db
