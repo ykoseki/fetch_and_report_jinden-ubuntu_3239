@@ -5,6 +5,7 @@ import json
 import os
 import ast
 import calendar
+from dotenv import load_dotenv
 import pandas as pd
 from datetime import datetime
 import openpyxl
@@ -102,42 +103,78 @@ def main():
     parser.add_argument("--month", type=int, default=3, help="Target Month (MM)")
     args = parser.parse_args()
 
-    base_dir = r"c:\Users\kosek\Documents\AntigravityPrj\ProjClaude"
-    base_url = "http://jinden-ubuntu"
-    site_id = "3239"
-    api_key = "ccad4832650fa8a7c860faf69998c88147d846dd035e54f81153177b71678ec3df79799f69b81d2c95e00e86d86f84879cad7716259f6266b40133eabebc7006"
+    # --- Configuration ---
+    # Load environment variables from .env file
+    load_dotenv()
     
-    package_file = os.path.join(base_dir, "業務改善報告書_2026_04_08 13_34_04.json")
-    template_file = os.path.join(base_dir, "202603.xlsx")
+    base_url = os.getenv("PLEASANTER_BASE_URL")
+    site_id = os.getenv("PLEASANTER_SITE_ID")
+    api_key = os.getenv("PLEASANTER_API_KEY")
+
+    # Error checking for missing environment variables
+    missing_vars = []
+    if not base_url: missing_vars.append("PLEASANTER_BASE_URL")
+    if not site_id: missing_vars.append("PLEASANTER_SITE_ID")
+    if not api_key: missing_vars.append("PLEASANTER_API_KEY")
+
+    if missing_vars:
+        print(f"[ERROR] Missing environment variables: {', '.join(missing_vars)}")
+        print("Please check your .env file.")
+        return
+
+    # --- Configuration (Portable & Slim! [Slim]) ---
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Use environment variables for security! 🛡️
+    base_url = os.getenv("PLEASANTER_BASE_URL")
+    site_id = os.getenv("PLEASANTER_SITE_ID")
+    api_key = os.getenv("PLEASANTER_API_KEY")
+
+    # Files are now OPTIONAL! (Internal defaults used) [DATA]
     excel_output = os.path.join(base_dir, f"Report_{args.year}_{args.month:02d}.xlsx")
     text_output = os.path.join(base_dir, f"Notification_{args.year}_{args.month:02d}.txt")
 
-    print(f"--- Generating Report and Notification (TinyURL) for {args.year}/{args.month} ---")
+    # Hardcoded Column Names (Originally from Excel Template) [LIST]
+    FINAL_COLUMNS = [
+        "ID", "提出日", "氏名", "部署名", "職場", "件名", "区分", 
+        "効果金額・率(円・%)", "効果率(%)適用", "改善効果点数", "ヨコテン評価点数", 
+        "一次審査日", "一次審査者", "創造力1", "改善力1", "問題解決力1", "合計1", 
+        "二次審査日", "二次審査者", "創造力2", "改善力2", "問題解決力2", "合計2", 
+        "総合点数", "内容", "受付状況", "ロック", "コメント"
+    ]
+
+    # Hardcoded Choices (Fallback dictionary from JSON) [Data]
+    CHOICES_FALLBACK = {
+        'ClassE': {'10': '第一製造', '11': '品質保証部', '21': '第二製造電顕', '22': '第二製造ME', '31': 'システム営業部', '32': 'サプライ営業部'},
+        'Status': {'100': '受付前', '900': '受付済'}
+    }
+
+    print(f"\n--- Generating Report and Notification (Slim Edition) ---")
+    print(f"[Target] {args.year}年{args.month}月度")
+    print(f"[Workspace] {base_dir}")
+    print(f"----------------------------------------------------------")
 
     # 1. Master & Mappings
-    choices_mappings = {}
-    try:
-        with open(package_file, 'r', encoding='utf-8-sig') as f:
-            package = json.load(f)
-        columns_def = package['Sites'][0]['SiteSettings'].get('Columns', [])
-        for col in columns_def:
-            if 'ChoicesText' in col and col['ChoicesText']:
-                choices_mappings[col['ColumnName']] = parse_choices(col['ChoicesText'])
-    except Exception as e:
-        print(f"Warning: Package parse issue: {e}")
+    print(f"[*] Initializing column mappings...")
+    choices_mappings = CHOICES_FALLBACK
 
+    print(f"[*] Fetching user and group masters...")
     users = fetch_master(base_url, api_key, "users")
     groups = fetch_master(base_url, api_key, "groups")
     user_map = {str(u['UserId']): u['Name'] for u in users}
     group_map = {str(g['GroupId']): g['GroupName'] for g in groups}
+    print(f"[OK] Master data loaded. (Users: {len(users)}, Groups: {len(groups)})")
 
     # 2. Fetch Data
+    print(f"[IN] Fetching records from Pleasanter (Site ID: {site_id})...")
     items = get_pleasanter_data(base_url, api_key, site_id, args.year, args.month)
     if not items:
-        print("No records found.")
+        print("[!] No records found for the specified period.")
         return
+    print(f"[OK] Fetched {len(items)} records!")
 
     # 3. Process Rows
+    print(f"[*] Processing records and mapping columns...")
     excel_rows = []
     for item in items:
         def get_hash(key):
@@ -151,8 +188,10 @@ def main():
         num_h = get_hash('NumHash')
         class_h = get_hash('ClassHash')
         
-        creator_name = user_map.get(str(int(item.get('Creator', 0))), "")
-        owner_name = user_map.get(str(int(item.get('Owner', 0))), creator_name)
+        creator_id = str(int(item.get('Creator', 0))) if item.get('Creator') else "0"
+        owner_id = str(int(item.get('Owner', 0))) if item.get('Owner') else creator_id
+        creator_name = user_map.get(creator_id, f"User({creator_id})")
+        owner_name = user_map.get(owner_id, creator_name)
         
         def map_choice(col_name, val):
             if col_name in choices_mappings:
@@ -192,15 +231,23 @@ def main():
         excel_rows.append(row_data)
 
     df_full = pd.DataFrame(excel_rows)
-    template_df = pd.read_excel(template_file, header=1)
-    final_cols = template_df.columns.tolist()
-    for c in final_cols:
+    # Use hardcoded column order
+    for c in FINAL_COLUMNS:
         if c not in df_full.columns: df_full[c] = ""
-    df_full = df_full[final_cols]
+    df_full = df_full[FINAL_COLUMNS]
     df_high = df_full[df_full["総合点数"] >= 21].copy()
 
+    # --- Sorting Logic ---
+    print(f"[*] Sorting data for Excel sheets...")
+    # Winners: Sorted by Total Score (Descending) as per notification text
+    df_high = df_high.sort_values(by=["総合点数"], ascending=False).reset_index(drop=True)
+    
+    # All Records: Sorted by Dept, Workplace, and Total Score (Descending) as per notification text
+    sort_keys_full = ["部署名", "職場", "総合点数"]
+    df_full = df_full.sort_values(by=sort_keys_full, ascending=False).reset_index(drop=True)
+
     # 4. Save Excel
-    print(f"Saving Excel report...")
+    print(f"[Excel] Saving report: {os.path.basename(excel_output)}...")
     try:
         with pd.ExcelWriter(excel_output, engine='openpyxl') as writer:
             df_high.to_excel(writer, sheet_name='高得点リスト(21点以上)', index=False)
@@ -235,16 +282,16 @@ def main():
             ws.page_setup.fitToWidth = 1
             ws.page_setup.fitToHeight = 0
         wb.save(excel_output)
+        print(f"[OK] Excel report saved successfully!")
 
         # 5. Generate Shortened URLs and Message
-        print(f"Generating dynamic TinyURLs...")
+        print(f"[*] Generating dynamic TinyURLs for notification...")
         url_high = generate_pleasanter_viewer_url(base_url, site_id, args.year, args.month, min_score=21)
         url_full = generate_pleasanter_viewer_url(base_url, site_id, args.year, args.month)
         
         short_url_high = shorten_url(url_high)
         short_url_full = shorten_url(url_full)
         
-        print(f"Notification text generation...")
         winners_count = len(df_high)
         total_count = len(df_full)
         
@@ -266,10 +313,14 @@ def main():
         
         with open(text_output, 'w', encoding='utf-8') as f:
             f.write(msg)
-        print(f"Done! Files generated: {excel_output}, {text_output}")
+        print(f"[OK] Notification text saved: {os.path.basename(text_output)}")
+        
+        print(f"\n--- All operations completed successfully! ---\n")
 
     except PermissionError:
-        print(f"ERROR: Permission denied.")
+        print(f"[ERROR] Permission denied. Is the Excel file open?")
+    except Exception as e:
+        print(f"[ERROR] An unexpected error occurred: {e}")
 
 if __name__ == "__main__":
     main()

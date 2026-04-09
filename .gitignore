@@ -24,3 +24,11 @@ __pycache__/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Secrets
+.env
+
+# Internal / Temporary
+creation_prompt.md
+*.bak
+*.tmp
